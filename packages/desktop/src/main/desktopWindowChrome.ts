@@ -18,6 +18,7 @@ import {
   PlatformChannels,
 } from "@zcode/shared";
 import { loadWindow, type WindowBootstrapOptions } from "./desktopHostProcess.js";
+import { attachUserThemeOverrides } from "./userThemeOverrides.js";
 import {
   buildWindowsTitleBarOverlayForZoomLevel,
   hasCustomWindowsControls,
@@ -621,6 +622,12 @@ export function createBrowserWindow(options: {
     win.webContents.setZoomFactor(initialDesktopZoomFactor);
     syncWindowControlsOverlayForZoomLevel(win, initialDesktopZoomLevel);
     syncWindowFullscreenState(win);
+  });
+  // 用户主题覆盖：userData/ui/theme-overrides.css 存在时按加载逐次注入。
+  // 主题由 renderer 的 CSS 变量驱动，这里只做 author 样式追加，不碰 renderer 状态。
+  attachUserThemeOverrides(win, {
+    getUserDataPath: () => app.getPath("userData"),
+    logger: options.logger,
   });
   win.webContents.on(
     "did-fail-load",

@@ -49,6 +49,8 @@ User-facing theme choices are:
 
 Default light and dark CSS variables still exist as fallback foundations, but new UI should be validated against Zai Light and Zai Dark as the active light/dark experiences.
 
+Desktop additionally supports a user-level escape hatch: when `userData/ui/theme-overrides.css` exists, the main process injects it as author-origin CSS on every main-window load (see `specs/desktop/user-theme-overrides.md`). It is a local, user-authored customization surface outside the design system — treat its content as the user's own responsibility, and do not gate built-in UI on it.
+
 ## Color Palette
 
 ### Core semantic colors
