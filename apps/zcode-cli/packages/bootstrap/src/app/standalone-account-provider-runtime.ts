@@ -104,6 +104,9 @@ export function createStandaloneAccountIdentityFromSecret(secret: string): strin
   return `key-${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
 }
 
+/** 与 services 侧 oauthCredentialRepo 的键保持一致；zcode JWT 是 Start Plan 的请求凭证。 */
+const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
+
 export async function readStandaloneAccountProviderConfigSnapshot(
   credentialStore: Pick<SharedZCodeCredentialStore, "loadMany">,
   env: Readonly<Record<string, string | undefined>>,
@@ -111,6 +114,11 @@ export async function readStandaloneAccountProviderConfigSnapshot(
 ): Promise<AccountProviderConfigSnapshot> {
   const catalog = await readStandaloneCodingPlanCatalog(env, config);
   const configuredProviders = catalog.providers;
+  // fork: start-plan(免费档)在 standalone 下并入账号覆盖层。登录解析仍只认
+  // individual-coding-plan(目录未动),这里仅按共享 zcodejwttoken 是否存在判定权益。
+  const startPlanProviderIds = await readStandaloneStartPlanProviderIds(env, config);
+  const jwtLoaded = await credentialStore.loadMany([ZCODE_JWT_TOKEN_KEY]);
+  const startPlanEntitled = Boolean(jwtLoaded[ZCODE_JWT_TOKEN_KEY]?.trim());
   const identityKeys = configuredProviders.map(({ providerId }) =>
     standaloneAccountIdentityCredentialKey(providerId),
   );
@@ -130,8 +138,8 @@ export async function readStandaloneAccountProviderConfigSnapshot(
   const candidateByProviderId = new Map(
     candidates.map((candidate) => [candidate.providerId, candidate]),
   );
-  const providers = new ProviderConfigMap(
-    configuredProviders.map(({ family, providerId }) => {
+  const providers = new ProviderConfigMap([
+    ...configuredProviders.map(({ family, providerId }) => {
       const candidate = candidateByProviderId.get(providerId);
       const apiKey = candidate ? apiKeyByCredentialKey[candidate.credentialKey]?.trim() : undefined;
       if (!candidate || !apiKey) {
@@ -151,8 +159,41 @@ export async function readStandaloneAccountProviderConfigSnapshot(
         }),
       ] as const;
     }),
-  );
+    ...startPlanProviderIds.map((providerId) =>
+      [
+        providerId,
+        new ProviderConfig({
+          access: new ZhipuAccountAccessConfig({ entitled: startPlanEntitled }),
+        }),
+      ] as const,
+    ),
+  ]);
   return createAccountProviderConfigSnapshot(catalog.zcodeBuiltinRevision, providers);
+}
+
+/** fork: 从内置配置读取 start-plan provider 列表(standalone 目录之外单独并入)。 */
+async function readStandaloneStartPlanProviderIds(
+  env: Readonly<Record<string, string | undefined>>,
+  config?: Pick<ProviderConfigLayerSnapshot, "revision" | "providers">,
+): Promise<readonly string[]> {
+  const collect = (snapshot: Pick<ProviderConfigLayerSnapshot, "providers">) =>
+    snapshot.providers.entries().flatMap(([providerId, provider]) => {
+      const access = provider.access;
+      return access?.type === "zhipu-account" && access.mode === "start-plan"
+        ? [providerId]
+        : [];
+    });
+  if (config) return collect(config);
+  const filePath = env[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]?.trim();
+  if (!filePath) return [];
+  const source = new NodeZCodeBuiltinProviderConfigSource({ bundledFilePath: filePath, watch: false });
+  try {
+    return collect(await source.read());
+  } catch {
+    return [];
+  } finally {
+    source.dispose();
+  }
 }
 
 export async function hasStandaloneCodingPlanAccess(
@@ -178,7 +219,22 @@ export function createStandaloneProviderRuntimeHeadersPort(
       input.abortSignal?.throwIfAborted();
       const providerId = input.providerId.trim();
       const access = input.accountAccess;
-      if (!access || access.mode !== "individual-coding-plan") {
+      if (!access) {
+        throw new Error(`Standalone Account Provider 请求身份无效: ${providerId}`);
+      }
+      // fork: start-plan(免费档)以共享 zcodejwttoken 作为请求凭证(与桌面端
+      // accountProviderRequestAuthService 的 start-plan 分支一致)。
+      if (access.mode === "start-plan") {
+        const jwt = (await credentialStore.load(ZCODE_JWT_TOKEN_KEY))?.trim();
+        if (!jwt) {
+          throw new Error(`Standalone Start Plan 凭据缺失(zcodejwttoken): ${providerId}`);
+        }
+        return {
+          headersApplied: true,
+          requestAuth: { apiKey: jwt },
+        };
+      }
+      if (access.mode !== "individual-coding-plan") {
         throw new Error(`Standalone Account Provider 请求身份无效: ${providerId}`);
       }
       const currentIdentity = (
