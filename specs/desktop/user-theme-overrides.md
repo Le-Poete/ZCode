@@ -8,8 +8,11 @@ ZCode 的主题体系（Zai Light / Zai Dark / System）由 CSS 变量驱动，�
 
 - 用户在 `userData/ui/theme-overrides.css` 放一段 CSS，桌面端把它注入到主窗口。
 - 文件不存在或读取失败时**零行为变化**，不产生告警噪音（记录 debug 级即可）。
-- 覆盖样式以 author origin 注入且晚于应用内置样式表，同等特异性下自然胜出；
-  需要更强覆盖时用户可自行使用更高选择器特异性或 `!important`。
+- 覆盖样式通过向 `document.head` 末尾追加 `<style id="zcode-user-theme-overrides">`
+  节点注入：层叠顺序天然晚于应用内置样式表，同等特异性下自然胜出；需要更强
+  覆盖时用户可自行使用更高选择器特异性或 `!important`。不使用
+  `webContents.insertCSS`——其 author 样式在 Chromium 中排于文档样式之前，
+  同等特异性会被内置主题压制，用户将被迫全程 `!important`。
 - 该文件是**本机用户自主编写**的内容，信任级等同于用户自己改配置文件；不做
   内容校验（CSP 由 Electron 对 author CSS 的处理兜底），不引入远程加载。
 

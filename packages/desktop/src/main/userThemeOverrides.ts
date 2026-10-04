@@ -65,6 +65,12 @@ export function attachUserThemeOverrides(
       }
       return;
     }
-    win.webContents.insertCSS(result.css, { cssOrigin: "author" });
+    // 不用 insertCSS：它的 author 样式在 Chromium 中排于文档样式之前，同等特异性
+    // 会被内置主题变量压制，用户只能靠 !important 兜底。改为向 head 末尾追加
+    // <style> 节点，层叠顺序天然在后，普通选择器即可覆盖内置主题。
+    const script = `(function(){var d=document;var n=d.getElementById("zcode-user-theme-overrides");if(!n){n=d.createElement("style");n.id="zcode-user-theme-overrides";d.head.appendChild(n);}n.textContent=${JSON.stringify(result.css)};})();`;
+    void win.webContents.executeJavaScript(script, false).catch(() => {
+      // 页面可能正导航或销毁；本次注入失败由下一次 did-finish-load 重放。
+    });
   });
 }
